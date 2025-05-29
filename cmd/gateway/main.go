@@ -15,6 +15,8 @@ import (
 	"github.com/dskuldeep/gateway/internal/llms"
 	"github.com/dskuldeep/gateway/internal/orgs"
 	"github.com/dskuldeep/gateway/internal/metrics"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 func main() {
@@ -26,13 +28,19 @@ func main() {
 	// Initialize metrics
 	metrics.Init()
 
+	// Initialize database
+	db, err := gorm.Open(postgres.Open(os.Getenv("DATABASE_URL")), &gorm.Config{})
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+
 	// Initialize router
 	router := gin.Default()
 
 	// Initialize services
 	authService := auth.NewService()
-	llmService := llms.NewService()
-	orgService := orgs.NewService()
+	orgService := orgs.NewService(db)
+	llmService := llms.NewService(orgService, db)
 
 	// Setup routes
 	setupRoutes(router, authService, llmService, orgService)
@@ -73,7 +81,7 @@ func setupRoutes(router *gin.Engine, authService *auth.Service, llmService *llms
 	})
 
 	// Metrics endpoint
-	router.GET("/metrics", metrics.Handler())
+	router.GET("/metrics", gin.WrapH(metrics.Handler()))
 
 	// API routes
 	v1 := router.Group("/v1")
