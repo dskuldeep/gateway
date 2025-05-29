@@ -32,18 +32,16 @@ type Service struct {
 	clients    map[types.Provider]LLMClient
 	models     map[string]Model
 	orgService *orgs.Service
-	metrics    *metrics.Metrics
 	db         *gorm.DB
 	mu         sync.RWMutex
 }
 
 // NewService creates a new LLM service
-func NewService(orgService *orgs.Service, metrics *metrics.Metrics, db *gorm.DB) *Service {
+func NewService(orgService *orgs.Service, db *gorm.DB) *Service {
 	return &Service{
 		clients:    make(map[types.Provider]LLMClient),
 		models:     make(map[string]Model),
 		orgService: orgService,
-		metrics:    metrics,
 		db:         db,
 	}
 }
@@ -136,13 +134,13 @@ func (s *Service) Query(ctx context.Context, orgID, projectID string, req Reques
 	start := time.Now()
 	resp, err := client.Query(ctx, req, apiKey.Key)
 	if err != nil {
-		s.metrics.RecordLLMError(req.Provider, req.Model)
+		metrics.RecordLLMError(req.Provider, req.Model)
 		return nil, fmt.Errorf("failed to query LLM: %w", err)
 	}
 
 	// Record metrics
-	s.metrics.RecordLLMLatency(req.Provider, req.Model, time.Since(start))
-	s.metrics.RecordLLMTokens(req.Provider, req.Model, resp.Usage)
+	metrics.RecordLLMLatency(req.Provider, req.Model, time.Since(start).Seconds())
+	metrics.RecordTokenUsage(req.Provider, req.Model, resp.Usage)
 
 	return resp, nil
 }
@@ -212,14 +210,14 @@ func (s *Service) HandleQuery(c *gin.Context) {
 	// Make request to LLM
 	resp, err := client.Query(c.Request.Context(), llmReq, apiKey.Key)
 	if err != nil {
-		s.metrics.RecordLLMError(req.Provider, req.Model)
+		metrics.RecordLLMError(req.Provider, req.Model)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	// Record metrics
-	s.metrics.RecordLLMLatency(req.Provider, req.Model, time.Since(start))
-	s.metrics.RecordLLMTokens(req.Provider, req.Model, resp.Usage)
+	metrics.RecordLLMLatency(req.Provider, req.Model, time.Since(start).Seconds())
+	metrics.RecordTokenUsage(req.Provider, req.Model, resp.Usage)
 
 	// Record API key usage
 	cost := float64(resp.Usage.TotalTokens) * model.CostPer1K / 1000
@@ -236,54 +234,4 @@ func (s *Service) HandleQuery(c *gin.Context) {
 
 	// Return response
 	c.JSON(http.StatusOK, resp)
-}
-
-// RegisterRoutes registers HTTP handlers for the LLM service
-func (s *Service) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/api/v1/llm/query", s.handleQuery)
-	mux.HandleFunc("/api/v1/llm/models", s.handleGetModels)
-}
-
-func (s *Service) handleQuery(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Get organization and project IDs from context (set by auth middleware)
-	orgID := r.Context().Value("org_id").(string)
-	projectID := r.Context().Value("project_id").(string)
-
-	var req Request
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	resp, err := s.Query(r.Context(), orgID, projectID, req)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
-}
-
-func (s *Service) handleGetModels(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	models := make(map[Provider][]Model)
-	for provider, client := range s.clients {
-		models[provider] = client.GetModels()
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(models)
 } 
