@@ -17,7 +17,7 @@ import (
 
 // QueryRequest represents the incoming request body
 type QueryRequest struct {
-	Provider    Provider          `json:"provider" binding:"required"`
+	Provider    types.Provider     `json:"provider" binding:"required"`
 	Model       string            `json:"model" binding:"required"`
 	Prompt      string            `json:"prompt" binding:"required"`
 	MaxTokens   int               `json:"max_tokens,omitempty"`
@@ -32,13 +32,13 @@ type Service struct {
 	clients    map[types.Provider]LLMClient
 	models     map[string]Model
 	orgService *orgs.Service
-	metrics    *metrics.Metrics
+	metrics    *metrics.Service
 	db         *gorm.DB
 	mu         sync.RWMutex
 }
 
 // NewService creates a new LLM service
-func NewService(orgService *orgs.Service, metrics *metrics.Metrics, db *gorm.DB) *Service {
+func NewService(orgService *orgs.Service, metrics *metrics.Service, db *gorm.DB) *Service {
 	return &Service{
 		clients:    make(map[types.Provider]LLMClient),
 		models:     make(map[string]Model),
@@ -120,19 +120,8 @@ func (s *Service) UpdateAPIKeyLastUsed(keyID uint) error {
 
 // Query sends a request to the appropriate LLM provider
 func (s *Service) Query(ctx context.Context, orgID, projectID string, req Request) (*Response, error) {
-	// Get organization and project
-	org, err := s.orgService.GetOrganization(orgID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get organization: %w", err)
-	}
-
-	project, err := s.orgService.GetProject(orgID, projectID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get project: %w", err)
-	}
-
 	// Get API key for the provider
-	apiKey, err := s.orgService.GetAPIKey(orgID, projectID, req.Provider)
+	apiKey, err := s.GetAPIKey(req.Provider)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get API key: %w", err)
 	}
@@ -145,7 +134,7 @@ func (s *Service) Query(ctx context.Context, orgID, projectID string, req Reques
 
 	// Send request
 	start := time.Now()
-	resp, err := client.Query(ctx, req, apiKey)
+	resp, err := client.Query(ctx, req, apiKey.Key)
 	if err != nil {
 		s.metrics.RecordLLMError(req.Provider, req.Model)
 		return nil, fmt.Errorf("failed to query LLM: %w", err)
@@ -154,12 +143,6 @@ func (s *Service) Query(ctx context.Context, orgID, projectID string, req Reques
 	// Record metrics
 	s.metrics.RecordLLMLatency(req.Provider, req.Model, time.Since(start))
 	s.metrics.RecordLLMTokens(req.Provider, req.Model, resp.Usage)
-
-	// Update usage in organization
-	if err := s.orgService.UpdateUsage(orgID, projectID, req.Provider, resp.Usage); err != nil {
-		// Log error but don't fail the request
-		fmt.Printf("failed to update usage: %v\n", err)
-	}
 
 	return resp, nil
 }
