@@ -1,16 +1,10 @@
 package orgs
 
 import (
-	"context"
-	"database/sql"
-	"encoding/json"
-	"fmt"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/dskuldeep/gateway/internal/metrics"
 	"github.com/dskuldeep/gateway/internal/types"
 	"gorm.io/gorm"
 )

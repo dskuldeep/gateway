@@ -11,6 +11,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/dskuldeep/gateway/internal/metrics"
 	"github.com/dskuldeep/gateway/internal/orgs"
+	"github.com/dskuldeep/gateway/internal/types"
+	"gorm.io/gorm"
 )
 
 // QueryRequest represents the incoming request body
@@ -27,30 +29,37 @@ type QueryRequest struct {
 
 // Service handles LLM requests and manages providers
 type Service struct {
-	clients    map[Provider]Client
+	clients    map[types.Provider]LLMClient
+	models     map[string]Model
 	orgService *orgs.Service
 	metrics    *metrics.Metrics
+	db         *gorm.DB
 	mu         sync.RWMutex
 }
 
 // NewService creates a new LLM service
-func NewService(orgService *orgs.Service, metrics *metrics.Metrics) *Service {
+func NewService(orgService *orgs.Service, metrics *metrics.Metrics, db *gorm.DB) *Service {
 	return &Service{
-		clients:    make(map[Provider]Client),
+		clients:    make(map[types.Provider]LLMClient),
+		models:     make(map[string]Model),
 		orgService: orgService,
 		metrics:    metrics,
+		db:         db,
 	}
 }
 
 // RegisterClient registers a new LLM client
-func (s *Service) RegisterClient(client Client) {
+func (s *Service) RegisterClient(client LLMClient) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.clients[client.GetProvider()] = client
+	for _, model := range client.GetModels() {
+		s.models[model.ID] = model
+	}
 }
 
 // GetClient returns the client for a given provider
-func (s *Service) GetClient(provider Provider) (Client, error) {
+func (s *Service) GetClient(provider types.Provider) (LLMClient, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	client, ok := s.clients[provider]
@@ -58,6 +67,55 @@ func (s *Service) GetClient(provider Provider) (Client, error) {
 		return nil, fmt.Errorf("provider %s not supported", provider)
 	}
 	return client, nil
+}
+
+// GetModel returns model information by ID
+func (s *Service) GetModel(id string) (Model, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	model, ok := s.models[id]
+	return model, ok
+}
+
+// ListModels returns all available models
+func (s *Service) ListModels() []Model {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	models := make([]Model, 0, len(s.models))
+	for _, model := range s.models {
+		models = append(models, model)
+	}
+	return models
+}
+
+// GetAPIKey returns an active API key for a provider
+func (s *Service) GetAPIKey(provider types.Provider) (*APIKey, error) {
+	var key APIKey
+	err := s.db.Where("provider = ? AND is_active = ?", provider, true).
+		Order("last_used ASC").
+		First(&key).Error
+	if err != nil {
+		return nil, err
+	}
+	return &key, nil
+}
+
+// RecordAPIKeyUsage records usage of an API key
+func (s *Service) RecordAPIKeyUsage(keyID uint, usage types.TokenUsage, cost float64) error {
+	keyUsage := KeyUsage{
+		APIKeyID:     keyID,
+		RequestCount: 1,
+		TokenCount:   int64(usage.TotalTokens),
+		Cost:         cost,
+		Timestamp:    time.Now(),
+	}
+	return s.db.Create(&keyUsage).Error
+}
+
+// UpdateAPIKeyLastUsed updates the last used timestamp of an API key
+func (s *Service) UpdateAPIKeyLastUsed(keyID uint) error {
+	return s.db.Model(&APIKey{}).Where("id = ?", keyID).
+		Update("last_used", time.Now()).Error
 }
 
 // Query sends a request to the appropriate LLM provider
@@ -126,9 +184,9 @@ func (s *Service) HandleQuery(c *gin.Context) {
 	}
 
 	// Get client for provider
-	client, ok := s.GetClient(req.Provider)
-	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "provider not supported"})
+	client, err := s.GetClient(req.Provider)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -171,14 +229,14 @@ func (s *Service) HandleQuery(c *gin.Context) {
 	// Make request to LLM
 	resp, err := client.Query(c.Request.Context(), llmReq, apiKey.Key)
 	if err != nil {
-		metrics.RecordLLMError(req.Provider, req.Model)
+		s.metrics.RecordLLMError(req.Provider, req.Model)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	// Record metrics
-	metrics.RecordLLMLatency(req.Provider, req.Model, time.Since(start))
-	metrics.RecordTokenUsage(req.Provider, req.Model, resp.Usage)
+	s.metrics.RecordLLMLatency(req.Provider, req.Model, time.Since(start))
+	s.metrics.RecordLLMTokens(req.Provider, req.Model, resp.Usage)
 
 	// Record API key usage
 	cost := float64(resp.Usage.TotalTokens) * model.CostPer1K / 1000
