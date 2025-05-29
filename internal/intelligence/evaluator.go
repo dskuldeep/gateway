@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -20,27 +19,27 @@ type Evaluator interface {
 
 // Evaluation represents the result of an intelligence layer evaluation
 type Evaluation struct {
-	Score       float64            `json:"score"`        // 0-1 score of response quality
-	Reason      string             `json:"reason"`       // Explanation of the score
-	Suggestions []string           `json:"suggestions"`  // Suggestions for improvement
-	Metadata    map[string]string  `json:"metadata"`     // Additional metadata
-	Timestamp   time.Time          `json:"timestamp"`    // When the evaluation was performed
+	Score       float64           `json:"score"`       // 0-1 score of response quality
+	Reason      string            `json:"reason"`      // Explanation of the score
+	Suggestions []string          `json:"suggestions"` // Suggestions for improvement
+	Metadata    map[string]string `json:"metadata"`    // Additional metadata
+	Timestamp   time.Time         `json:"timestamp"`   // When the evaluation was performed
 }
 
 // Config represents the configuration for an evaluator
 type Config struct {
-	Enabled         bool              `json:"enabled"`
-	SamplingRate    float64           `json:"sampling_rate"`     // 0-1, percentage of requests to evaluate
-	Keywords        []string          `json:"keywords"`          // Keywords that trigger evaluation
-	MinScore        float64           `json:"min_score"`         // Minimum acceptable score
-	MaxLatency      time.Duration     `json:"max_latency"`       // Maximum acceptable latency
-	CustomRules     map[string]string `json:"custom_rules"`      // Custom evaluation rules
+	Enabled      bool              `json:"enabled"`
+	SamplingRate float64           `json:"sampling_rate"` // 0-1, percentage of requests to evaluate
+	Keywords     []string          `json:"keywords"`      // Keywords that trigger evaluation
+	MinScore     float64           `json:"min_score"`     // Minimum acceptable score
+	MaxLatency   time.Duration     `json:"max_latency"`   // Maximum acceptable latency
+	CustomRules  map[string]string `json:"custom_rules"`  // Custom evaluation rules
 }
 
 // DefaultEvaluator is a sample implementation that uses OpenAI to evaluate responses
 type DefaultEvaluator struct {
-	config     Config
-	llmClient  llms.LLMClient
+	config    Config
+	llmClient llms.LLMClient
 }
 
 // NewDefaultEvaluator creates a new default evaluator
@@ -97,7 +96,7 @@ Provide a score from 0-1 and explain your reasoning.`, req.Prompt, resp.Text)
 		Temperature: 0.3,
 	}
 
-	evalResp, err := e.llmClient.Query(ctx, evalReq)
+	evalResp, err := e.llmClient.Query(ctx, evalReq, "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to evaluate response: %w", err)
 	}
@@ -115,10 +114,10 @@ Provide a score from 0-1 and explain your reasoning.`, req.Prompt, resp.Text)
 
 	// Add metadata
 	evaluation.Metadata = map[string]string{
-		"model":           resp.Model,
-		"latency":         resp.Latency.String(),
-		"token_usage":     fmt.Sprintf("%d", resp.Usage.TotalTokens),
-		"finish_reason":   resp.FinishReason,
+		"model":         resp.Model,
+		"latency":       resp.Latency.String(),
+		"token_usage":   fmt.Sprintf("%d", resp.Usage.TotalTokens),
+		"finish_reason": resp.FinishReason,
 	}
 
 	return &evaluation, nil
@@ -131,7 +130,8 @@ func extractScore(text string) float64 {
 	words := strings.Fields(text)
 	for _, word := range words {
 		if strings.HasPrefix(word, "0.") || word == "1" {
-			if score, err := fmt.Sscanf(word, "%f", new(float64)); err == nil {
+			var score float64
+			if _, err := fmt.Sscanf(word, "%f", &score); err == nil {
 				return score
 			}
 		}
@@ -161,7 +161,8 @@ func getEnvBool(key string, defaultVal bool) bool {
 
 func getEnvFloat(key string, defaultVal float64) float64 {
 	if val := os.Getenv(key); val != "" {
-		if f, err := fmt.Sscanf(val, "%f", new(float64)); err == nil {
+		var f float64
+		if _, err := fmt.Sscanf(val, "%f", &f); err == nil {
 			return f
 		}
 	}
@@ -192,4 +193,4 @@ func getEnvMap(key string, defaultVal map[string]string) map[string]string {
 		}
 	}
 	return defaultVal
-} 
+}

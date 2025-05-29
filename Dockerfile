@@ -15,18 +15,15 @@ RUN go mod tidy
 # Copy source code
 COPY . .
 
-# Build the application with verbose output
-RUN echo "Building gateway..." && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -v -o gateway ./cmd/gateway && \
-    echo "Build complete. Binary details:" && \
-    ls -la gateway
+# Build the application
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -v -o gateway .
 
 # Final stage
 FROM alpine:latest
 
 WORKDIR /app
 
-# Install necessary tools for debugging
+# Install necessary tools
 RUN apk add --no-cache bash
 
 # Copy the binary from builder
@@ -37,13 +34,10 @@ COPY --from=builder /app/config ./config
 
 # Copy and set up the run script
 COPY run.sh .
-RUN chmod 755 run.sh && \
-    chmod 755 gateway && \
-    echo "Final image contents:" && \
-    ls -la
+RUN chmod +x run.sh gateway
 
 # Expose port
 EXPOSE 8080
 
 # Run the application using the shell script
-CMD ["/bin/bash", "run.sh"] 
+CMD ["/bin/bash", "run.sh"]

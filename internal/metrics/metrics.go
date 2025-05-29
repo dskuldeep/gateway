@@ -1,10 +1,12 @@
 package metrics
 
 import (
+	"net/http"
+	"strconv"
+
+	"github.com/dskuldeep/gateway/internal/types"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/dskuldeep/gateway/internal/types"
-	"net/http"
 )
 
 var (
@@ -94,5 +96,5 @@ func RecordAPILatency(endpoint, method string, duration float64) {
 
 // RecordAPIError records an API request error
 func RecordAPIError(endpoint, method string, status int) {
-	apiErrors.WithLabelValues(endpoint, method, string(status)).Inc()
-} 
+	apiErrors.WithLabelValues(endpoint, method, strconv.Itoa(status)).Inc()
+}

@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -11,74 +9,51 @@ import (
 	"syscall"
 	"time"
 
-	_ "github.com/lib/pq"
 	"github.com/dskuldeep/gateway/internal/auth"
-	"github.com/dskuldeep/gateway/internal/intelligence"
 	"github.com/dskuldeep/gateway/internal/llms"
-	"github.com/dskuldeep/gateway/internal/llms/google"
-	"github.com/dskuldeep/gateway/internal/llms/groq"
 	"github.com/dskuldeep/gateway/internal/metrics"
 	"github.com/dskuldeep/gateway/internal/orgs"
+	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 func main() {
-	// Initialize database connection
+	// Load environment variables
+	if err := godotenv.Load(); err != nil {
+		log.Printf("Warning: .env file not found")
+	}
+
+	// Initialize metrics
+	metrics.Init()
+
+	// Initialize database
 	db, err := initDB()
 	if err != nil {
-		log.Fatalf("Failed to initialize database: %v", err)
+		log.Fatalf("Failed to connect to database: %v", err)
 	}
-	defer db.Close()
+
+	// Initialize router
+	router := gin.Default()
 
 	// Initialize services
-	metrics := metrics.NewMetrics()
-	orgService, err := orgs.NewService(db)
-	if err != nil {
-		log.Fatalf("Failed to initialize organization service: %v", err)
-	}
-
 	authService := auth.NewService()
-	llmService := llms.NewService(orgService, metrics)
+	orgService := orgs.NewService(db)
+	llmService := llms.NewService(orgService, db)
 
-	// Register LLM providers
-	llmService.RegisterClient(groq.NewClient())
-	llmService.RegisterClient(google.NewClient())
-
-	// Initialize intelligence layer
-	evaluator := intelligence.NewDefaultEvaluator()
-	if err := evaluator.LoadConfig(); err != nil {
-		log.Printf("Warning: Failed to load intelligence config: %v", err)
-	}
-
-	// Create HTTP server
-	mux := http.NewServeMux()
-
-	// Register routes
-	authService.RegisterRoutes(mux)
-	orgService.RegisterRoutes(mux)
-	llmService.RegisterRoutes(mux)
-
-	// Add health check endpoint
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-	})
-
-	// Add metrics endpoint
-	mux.Handle("/metrics", metrics.Handler())
+	// Setup routes
+	setupRoutes(router, authService, llmService, orgService)
 
 	// Create server
-	server := &http.Server{
-		Addr:         ":8080",
-		Handler:      mux,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  120 * time.Second,
+	srv := &http.Server{
+		Addr:    ":8080",
+		Handler: router,
 	}
 
 	// Start server in a goroutine
 	go func() {
-		log.Printf("Server starting on :8080")
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Failed to start server: %v", err)
 		}
 	}()
@@ -89,47 +64,98 @@ func main() {
 	<-quit
 
 	// Graceful shutdown
-	log.Println("Shutting down server...")
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := server.Shutdown(ctx); err != nil {
+	if err := srv.Shutdown(ctx); err != nil {
 		log.Fatalf("Server forced to shutdown: %v", err)
 	}
 
-	log.Println("Server exited properly")
+	log.Println("Server exiting")
 }
 
-func initDB() (*sql.DB, error) {
-	// Get database connection details from environment
-	host := getEnv("DB_HOST", "localhost")
-	port := getEnv("DB_PORT", "5432")
-	user := getEnv("DB_USER", "postgres")
-	password := getEnv("DB_PASSWORD", "postgres")
-	dbname := getEnv("DB_NAME", "gateway")
-	sslmode := getEnv("DB_SSL_MODE", "disable")
+func setupRoutes(router *gin.Engine, authService *auth.Service, llmService *llms.Service, orgService *orgs.Service) {
+	// Health check
+	router.GET("/health", func(c *gin.Context) {
+		c.JSON(200, gin.H{"status": "ok"})
+	})
 
-	// Create connection string
-	connStr := fmt.Sprintf(
-		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
-		host, port, user, password, dbname, sslmode,
-	)
+	// Metrics endpoint
+	router.GET("/metrics", gin.WrapH(metrics.Handler()))
 
-	// Open database connection
-	db, err := sql.Open("postgres", connStr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w", err)
+	// API routes
+	v1 := router.Group("/v1")
+	{
+		// LLM routes
+		llm := v1.Group("/llm")
+		{
+			llm.POST("/query", authService.AuthMiddleware(), llmService.HandleQuery)
+		}
+
+		// Organization routes
+		orgs := v1.Group("/orgs")
+		{
+			orgs.Use(authService.AuthMiddleware())
+			orgs.POST("", orgService.CreateOrganization)
+			orgs.GET("", orgService.ListOrganizations)
+			orgs.GET("/:id", orgService.GetOrganization)
+			orgs.PUT("/:id", orgService.UpdateOrganization)
+			orgs.DELETE("/:id", orgService.DeleteOrganization)
+		}
+
+		// Project routes
+		projects := v1.Group("/projects")
+		{
+			projects.Use(authService.AuthMiddleware())
+			projects.POST("", orgService.CreateProject)
+			projects.GET("", orgService.ListProjects)
+			projects.GET("/:id", orgService.GetProject)
+			projects.PUT("/:id", orgService.UpdateProject)
+			projects.DELETE("/:id", orgService.DeleteProject)
+		}
+
+		// API key routes
+		apiKeys := v1.Group("/api-keys")
+		{
+			apiKeys.Use(authService.AuthMiddleware())
+			apiKeys.POST("", orgService.CreateAPIKey)
+			apiKeys.GET("", orgService.ListAPIKeys)
+			apiKeys.DELETE("/:id", orgService.RevokeAPIKey)
+		}
+	}
+}
+
+func initDB() (*gorm.DB, error) {
+	// Get database URL from environment
+	databaseURL := getEnv("DATABASE_URL", "")
+	if databaseURL == "" {
+		// Build database URL from individual components
+		host := getEnv("DB_HOST", "localhost")
+		port := getEnv("DB_PORT", "5432")
+		user := getEnv("DB_USER", "postgres")
+		password := getEnv("DB_PASSWORD", "postgres")
+		dbname := getEnv("DB_NAME", "gateway")
+		sslmode := getEnv("DB_SSL_MODE", "disable")
+
+		databaseURL = "host=" + host + " port=" + port + " user=" + user + " password=" + password + " dbname=" + dbname + " sslmode=" + sslmode
 	}
 
-	// Test connection
-	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("failed to ping database: %w", err)
+	// Open database connection with GORM
+	db, err := gorm.Open(postgres.Open(databaseURL), &gorm.Config{})
+	if err != nil {
+		return nil, err
+	}
+
+	// Get underlying sql.DB to configure connection pool
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, err
 	}
 
 	// Set connection pool settings
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(25)
-	db.SetConnMaxLifetime(5 * time.Minute)
+	sqlDB.SetMaxOpenConns(25)
+	sqlDB.SetMaxIdleConns(25)
+	sqlDB.SetConnMaxLifetime(5 * time.Minute)
 
 	return db, nil
 }
@@ -139,4 +165,4 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
-} 
+}
