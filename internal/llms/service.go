@@ -32,13 +32,13 @@ type Service struct {
 	clients    map[types.Provider]LLMClient
 	models     map[string]Model
 	orgService *orgs.Service
-	metrics    *metrics.Service
+	metrics    *metrics.Metrics
 	db         *gorm.DB
 	mu         sync.RWMutex
 }
 
 // NewService creates a new LLM service
-func NewService(orgService *orgs.Service, metrics *metrics.Service, db *gorm.DB) *Service {
+func NewService(orgService *orgs.Service, metrics *metrics.Metrics, db *gorm.DB) *Service {
 	return &Service{
 		clients:    make(map[types.Provider]LLMClient),
 		models:     make(map[string]Model),
