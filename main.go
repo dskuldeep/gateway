@@ -13,6 +13,7 @@ import (
 	"github.com/dskuldeep/gateway/internal/llms"
 	"github.com/dskuldeep/gateway/internal/metrics"
 	"github.com/dskuldeep/gateway/internal/orgs"
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	"gorm.io/driver/postgres"
@@ -75,6 +76,15 @@ func main() {
 }
 
 func setupRoutes(router *gin.Engine, authService *auth.Service, llmService *llms.Service, orgService *orgs.Service) {
+	// Configure CORS
+	config := cors.DefaultConfig()
+	config.AllowOrigins = []string{"http://localhost:3000", "http://127.0.0.1:3000"}
+	config.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
+	config.AllowHeaders = []string{"Origin", "Content-Type", "Accept", "Authorization", "X-API-Key"}
+	config.ExposeHeaders = []string{"Content-Length"}
+	config.AllowCredentials = true
+	router.Use(cors.New(config))
+
 	// Health check
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
@@ -86,10 +96,32 @@ func setupRoutes(router *gin.Engine, authService *auth.Service, llmService *llms
 	// API routes
 	v1 := router.Group("/v1")
 	{
+		// Auth routes
+		auth := v1.Group("/auth")
+		{
+			auth.GET("/me", authService.AuthMiddleware(), func(c *gin.Context) {
+				c.JSON(200, gin.H{
+					"user_id":         c.GetString("user_id"),
+					"organization_id": c.GetString("organization_id"),
+					"project_id":      c.GetString("project_id"),
+				})
+			})
+		}
+
 		// LLM routes
 		llm := v1.Group("/llm")
 		{
 			llm.POST("/query", authService.AuthMiddleware(), llmService.HandleQuery)
+			llm.GET("/models", func(c *gin.Context) {
+				c.JSON(200, gin.H{
+					"models": []gin.H{
+						{"id": "gpt-4", "name": "GPT-4", "provider": "openai"},
+						{"id": "gpt-3.5-turbo", "name": "GPT-3.5 Turbo", "provider": "openai"},
+						{"id": "claude-3-opus", "name": "Claude 3 Opus", "provider": "anthropic"},
+						{"id": "gemini-pro", "name": "Gemini Pro", "provider": "google"},
+					},
+				})
+			})
 		}
 
 		// Organization routes

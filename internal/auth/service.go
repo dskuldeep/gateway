@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	"github.com/dskuldeep/gateway/internal/metrics"
+	"github.com/gin-gonic/gin"
 )
 
 // Service handles authentication and authorization
@@ -26,6 +26,16 @@ func NewService() *Service {
 // AuthMiddleware validates Clerk JWT tokens
 func (s *Service) AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Check if running in development mode
+		if os.Getenv("ENV") == "development" {
+			// In development mode, set dummy user data
+			c.Set("user_id", "dev-user-123")
+			c.Set("organization_id", "dev-org-123")
+			c.Set("project_id", "dev-project-123")
+			c.Next()
+			return
+		}
+
 		// Get token from Authorization header
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
@@ -128,4 +138,4 @@ func (s *Service) RequireProjectAccess() gin.HandlerFunc {
 
 		c.Next()
 	}
-} 
+}
