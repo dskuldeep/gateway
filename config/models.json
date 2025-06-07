@@ -1,0 +1,64 @@
+[
+    {
+        "provider": "OpenAI",
+        "model": "gpt-3.5-turbo",
+        "description": "GPT-3.5 Turbo model, suitable for general-purpose tasks.",
+        "max_tokens": 4096,
+        "temperature": 0.7,
+        "top_p": 1.0,
+        "n": 1,
+        "stream": false
+    },
+    {
+        "provider": "OpenAI",
+        "model": "gpt-4",
+        "description": "GPT-4 model, offering improved performance for complex tasks.",
+        "max_tokens": 8192,
+        "temperature": 0.7,
+        "top_p": 1.0,
+        "n": 1,
+        "stream": false
+    },
+    {
+        "provider": "OpenAI",
+        "model": "gpt-4-turbo",
+        "description": "GPT-4 Turbo model, optimized for speed and cost.",
+        "max_tokens": 8192,
+        "temperature": 0.7,
+        "top_p": 1.0,
+        "n": 1,
+        "stream": false
+    }
+    ,
+    {
+        "provider": "Anthropic",
+        "model": "claude-2",
+        "description": "Claude 2 model, designed for conversational AI tasks.",
+        "max_tokens": 100000,
+        "temperature": 0.7,
+        "top_p": 1.0,
+        "n": 1,
+        "stream": false
+    },
+    {
+        "provider": "Google",
+        "model": "gemini-1.5-pro",
+        "description": "Gemini 1.5 Pro model, suitable for advanced AI applications.",
+        "max_tokens": 100000,
+        "temperature": 0.7,
+        "top_p": 1.0,
+        "n": 1,
+        "stream": false
+    }
+    ,
+    {
+        "provider": "Mistral",
+        "model": "mistral-7b",
+        "description": "Mistral 7B model, a powerful open-source language model.",
+        "max_tokens": 4096,
+        "temperature": 0.7,
+        "top_p": 1.0,
+        "n": 1,
+        "stream": false
+    }
+]
